@@ -1,0 +1,49 @@
+appId: ai.paperclip.desktop
+productName: Paperclip
+copyright: Copyright © Paperclip
+
+directories:
+  output: release
+  buildResources: build
+
+# The shell itself is tiny; the Paperclip server tree ships as extraResources so
+# it stays on a real filesystem (native .node binaries, postgres dylibs and the
+# dylib alias symlinks cannot live inside an asar archive).
+files:
+  - dist/**
+  - package.json
+  - "!**/*.map"
+
+# NOTE: the staged server tree is NOT declared as extraResources on purpose.
+# electron-builder hardcodes `!**/node_modules/**` in its default ignore list,
+# which silently strips the server's runtime closure. scripts/package.mjs copies
+# the tree into the bundle itself (preserving the postgres dylib symlinks).
+
+asar: true
+npmRebuild: false
+buildDependenciesFromSource: false
+
+mac:
+  category: public.app-category.productivity
+  # One arch per run: scripts/package.mjs loops over the requested arches so a
+  # prepackaged bundle can never be repackaged under the wrong arch label.
+  target:
+    - target: dmg
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  # Unsigned local builds: set CSC_IDENTITY_AUTO_DISCOVERY / CSC_LINK in CI to sign.
+  identity: null
+
+dmg:
+  artifactName: ${productName}-${version}-${arch}.dmg
+
+win:
+  target:
+    - target: nsis
+
+linux:
+  category: Utility
+  target:
+    - target: AppImage

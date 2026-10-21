@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Paperclip</string>
+    <string name="title_activity_main">Paperclip</string>
+    <string name="package_name">ai.paperclip.app</string>
+    <string name="custom_url_scheme">ai.paperclip.app</string>
+</resources>

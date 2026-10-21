@@ -1,0 +1,28 @@
+{
+  "name": "@paperclipai/desktop",
+  "version": "0.3.1",
+  "private": true,
+  "description": "Paperclip desktop shell (Electron). Standalone: consumes a Paperclip checkout as a build input.",
+  "type": "module",
+  "main": "dist/main.js",
+  "engines": {
+    "node": ">=24.11.0"
+  },
+  "scripts": {
+    "stage": "node scripts/stage-server.mjs",
+    "preflight": "node scripts/preflight-runtime.mjs",
+    "probe": "node scripts/probe.mjs",
+    "build": "node scripts/build.mjs",
+    "dev": "node scripts/dev.mjs",
+    "package:mac": "node scripts/package.mjs --mac",
+    "package:win": "node scripts/package.mjs --win",
+    "package:linux": "node scripts/package.mjs --linux"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "electron": "^44.9.2",
+    "electron-builder": "^26.15.3",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.9.3"
+  }
+}

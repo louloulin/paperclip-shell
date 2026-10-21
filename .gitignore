@@ -1,0 +1,18 @@
+node_modules/
+.stage/
+release/
+dist/
+*.log
+.DS_Store
+
+# Capacitor / native build output
+mobile/android/.gradle/
+mobile/android/app/build/
+mobile/android/build/
+mobile/ios/App/Pods/
+mobile/ios/App/build/
+mobile/ios/App/DerivedData/
+mobile/ios/App/App/public/
+mobile/android/app/src/main/assets/public/
+mobile/android/app/src/main/assets/capacitor.config.json
+mobile/ios/App/App/capacitor.config.json
