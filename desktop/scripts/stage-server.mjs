@@ -29,14 +29,23 @@ import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { capture, log, resolvePaperclipRepo, run, stageDir } from "./lib.mjs";
+import { capture, log, resolvePaperclipRepo, run, stageDirFor } from "./lib.mjs";
 
 const STEP = "stage";
 const repo = resolvePaperclipRepo();
-const tarballDir = path.join(stageDir, "..", "tarballs");
 const skipBuild = process.env.PAPERCLIP_SHELL_SKIP_BUILD === "1";
 const skipUi = skipBuild || process.env.PAPERCLIP_SHELL_SKIP_UI === "1";
 const skipPack = process.env.PAPERCLIP_SHELL_SKIP_PACK === "1";
+const skipInstall = process.env.PAPERCLIP_SHELL_SKIP_INSTALL === "1";
+// Cross-arch staging: native deps (sharp, @embedded-postgres, agent runtimes)
+// are arch-specific, so x64 and arm64 need separate trees.
+const targetArch = process.env.PAPERCLIP_SHELL_TARGET_ARCH?.trim() || process.arch;
+const targetOs = process.env.PAPERCLIP_SHELL_TARGET_OS?.trim() || process.platform;
+const crossArch = targetArch !== process.arch || targetOs !== process.platform;
+const stageDir = stageDirFor(targetArch);
+// Tarballs are arch-independent (pure JS/build output), so both arches share one
+// directory next to the per-arch server trees.
+const tarballDir = path.join(path.dirname(stageDir), "tarballs");
 
 function requireFile(file, hint) {
   if (!existsSync(file)) throw new Error(`missing ${file}${hint ? ` (${hint})` : ""}`);
@@ -123,7 +132,7 @@ if (missing.length > 0) {
 }
 log(STEP, `workspace closure: ${workspaceDeps.length} packages`);
 
-rmSync(tarballDir, { recursive: true, force: true });
+if (!skipPack) rmSync(tarballDir, { recursive: true, force: true });
 mkdirSync(tarballDir, { recursive: true });
 
 const tarballs = new Map();
@@ -157,7 +166,14 @@ log(STEP, `packed ${tarballs.size} workspace tarballs -> ${tarballDir}`);
 
 // --- 3. Install the runtime closure ---------------------------------------
 log(STEP, `staging into ${stageDir} ...`);
-rmSync(stageDir, { recursive: true, force: true });
+// A skipped install means node_modules is the expensive part we want to keep
+// (a cross-arch closure can take ~11 min to build); refresh only the build
+// outputs and manifest around it.
+const preservedInstall = skipInstall && existsSync(path.join(stageDir, "node_modules"));
+for (const entry of ["dist", "skills", "ui-dist", "package.json"]) {
+  rmSync(path.join(stageDir, entry), { recursive: true, force: true });
+}
+if (!preservedInstall) rmSync(stageDir, { recursive: true, force: true });
 for (const entry of ["dist", "skills"]) {
   const source = path.join(repo, "server", entry);
   if (existsSync(source)) cpSync(source, path.join(stageDir, entry), { recursive: true });
@@ -201,16 +217,37 @@ writeFileSync(path.join(stageDir, "package.json"), `${JSON.stringify(installMani
 log(STEP, "installing runtime closure (npm --omit=dev) ...");
 // --legacy-peer-deps: npm 10's arborist crashes ("Cannot read properties of
 // null (reading 'edgesOut')") in #loadPeerSet on this graph's peer sets.
-run("npm", ["install", "--omit=dev", "--no-audit", "--no-fund", "--legacy-peer-deps"], {
-  cwd: stageDir,
-});
+if (skipInstall && existsSync(path.join(stageDir, "node_modules"))) {
+  log(STEP, "npm install skipped (reusing existing node_modules)");
+} else {
+  run(
+    "npm",
+    [
+      "install",
+      "--omit=dev",
+      "--no-audit",
+      "--no-fund",
+      "--legacy-peer-deps",
+      ...(crossArch ? [`--cpu=${targetArch}`, `--os=${targetOs}`] : []),
+    ],
+    { cwd: stageDir },
+  );
+}
 
 // --- 4. Re-apply the repository's dependency patches ----------------------
+// The repo helper runs `patch --forward`, which exits non-zero once every hunk
+// is already applied — so it is only valid against a freshly installed tree. A
+// preserved tree already carries the patches; the marker checks in step 5 are
+// what prove that.
 const { applyBundledDependencyPatches } = await import(helperUrl);
 const bundledDependencies =
   sourceManifest.bundleDependencies ?? sourceManifest.bundledDependencies ?? [];
-log(STEP, `re-applying repository patches (${bundledDependencies.length} bundled packages) ...`);
-applyBundledDependencyPatches(stageDir, bundledDependencies, repo);
+if (preservedInstall) {
+  log(STEP, `repository patches: skipped (reusing already-patched tree, ${bundledDependencies.length} bundled packages)`);
+} else {
+  log(STEP, `re-applying repository patches (${bundledDependencies.length} bundled packages) ...`);
+  applyBundledDependencyPatches(stageDir, bundledDependencies, repo);
+}
 
 // The repo helper only patches the server's *bundled* closure. `embedded-postgres`
 // is a plain dependency of the server, so npm installs an unpatched copy at the
@@ -248,7 +285,7 @@ const platformPostgresDir = path.join(
   stageDir,
   "node_modules",
   "@embedded-postgres",
-  `${process.platform}-${process.arch}`,
+  `${targetOs}-${targetArch}`,
 );
 const hydrateScript = path.join(platformPostgresDir, "scripts", "hydrate-symlinks.js");
 if (existsSync(hydrateScript)) {
@@ -273,7 +310,7 @@ const platformPostgres = path.join(
   stageDir,
   "node_modules",
   "@embedded-postgres",
-  `${process.platform}-${process.arch}`,
+  `${targetOs}-${targetArch}`,
 );
 if (!existsSync(platformPostgres) || !statSync(platformPostgres).isDirectory()) {
   throw new Error(`platform postgres binaries missing: ${platformPostgres}`);

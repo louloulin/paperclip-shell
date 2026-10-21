@@ -13,6 +13,11 @@ export const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.u
 export const shellRoot = path.resolve(desktopRoot, "..");
 export const stageDir = path.join(desktopRoot, ".stage", "server");
 export const stageServerEntry = path.join(stageDir, "dist", "index.js");
+
+/** Staged server tree for one target arch (native deps are arch-specific). */
+export function stageDirFor(arch) {
+  return arch && arch !== process.arch ? path.join(desktopRoot, ".stage", `server-${arch}`) : stageDir;
+}
 export const MINIMUM_NODE_VERSION = "24.11.0";
 
 const requireFromDesktop = createRequire(path.join(desktopRoot, "package.json"));

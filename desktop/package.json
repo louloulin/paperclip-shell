@@ -15,6 +15,7 @@
     "build": "node scripts/build.mjs",
     "dev": "node scripts/dev.mjs",
     "package:mac": "node scripts/package.mjs --mac",
+    "package:mac:both": "node scripts/package.mjs --mac --arm64 --x64",
     "package:win": "node scripts/package.mjs --win",
     "package:linux": "node scripts/package.mjs --linux"
   },

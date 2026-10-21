@@ -9,7 +9,7 @@
 // Exit code 1 on any failure. Set PAPERCLIP_DESKTOP_ALLOW_OLD_NODE=1 to warn
 // instead of failing on the version check (not recommended).
 
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import path from "node:path";
 import {
   capture,
@@ -18,11 +18,21 @@ import {
   MINIMUM_NODE_VERSION,
   resolveElectronBinary,
   resolvePaperclipRepo,
-  stageDir,
+  stageDirFor,
 } from "./lib.mjs";
 
 const STEP = "preflight";
 const failures = [];
+
+// Which staged tree to gate. Cross-arch trees cannot be loaded by the host
+// Electron binary (sharp/postgres binaries are single-arch), so their runtime
+// probe is replaced by a binary-architecture check and deferred to the
+// packaged smoke test.
+const targetArch = process.env.PAPERCLIP_SHELL_TARGET_ARCH?.trim() || process.arch;
+const crossArch = targetArch !== process.arch;
+const stageDir = stageDirFor(targetArch);
+// `file(1)` names for the arches we ship.
+const FILE_ARCH = { x64: "x86_64", arm64: "arm64" }[targetArch] ?? targetArch;
 
 function check(label, fn) {
   try {
@@ -69,7 +79,41 @@ check("staged server tree", () => {
 });
 
 // --- 3. Native + critical deps load under the shipping runtime ------------
-if (existsSync(path.join(stageDir, "dist", "index.js"))) {
+if (crossArch) {
+  check(`native deps match target arch (${targetArch})`, () => {
+    const verified = [];
+    const assertArch = (file, label) => {
+      const out = capture("file", ["-b", file]);
+      if (!out.includes(FILE_ARCH)) {
+        throw new Error(`${label} is not ${targetArch}: ${out.trim()}`);
+      }
+      verified.push(label);
+    };
+    const postgresBin = path.join(
+      stageDir,
+      "node_modules",
+      "@embedded-postgres",
+      `${process.platform}-${targetArch}`,
+      "native",
+      "bin",
+      "initdb",
+    );
+    if (!existsSync(postgresBin)) throw new Error(`missing ${postgresBin}`);
+    assertArch(postgresBin, "initdb");
+
+    const sharpLibDir = path.join(stageDir, "node_modules", "@img", `sharp-${process.platform}-${targetArch}`, "lib");
+    if (!existsSync(sharpLibDir)) throw new Error(`missing ${sharpLibDir}`);
+    const sharpNodes = readdirSync(sharpLibDir).filter((f) => f.endsWith(".node"));
+    if (sharpNodes.length === 0) throw new Error(`no sharp binding in ${sharpLibDir}`);
+    assertArch(path.join(sharpLibDir, sharpNodes[0]), "sharp");
+
+    return verified.join(", ");
+  });
+  log(
+    STEP,
+    `cross-arch (${targetArch} on ${process.arch}): require() probe deferred to the packaged smoke test`,
+  );
+} else if (existsSync(path.join(stageDir, "dist", "index.js"))) {
   const probeScript = `
 const { createRequire } = require("node:module");
 const req = createRequire(process.argv[1]);
@@ -126,7 +170,8 @@ const versions = JSON.parse(
 
 log(
   STEP,
-  `runtime identity: node ${versions.node} | v8 ${versions.v8} | electron ${versions.electron ?? "n/a"}`,
+  `runtime identity: node ${versions.node} | v8 ${versions.v8} | electron ${versions.electron ?? "n/a"}` +
+    (crossArch ? ` (host ${process.arch}; target tree is ${targetArch})` : ""),
 );
 
 if (failures.length > 0) {

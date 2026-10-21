@@ -28,6 +28,34 @@ PAPERCLIP_REPO=~/pix/paperclip npm run preflight   # Electron Node version + nat
 PAPERCLIP_REPO=~/pix/paperclip npm run probe       # boot the staged server end-to-end
 ```
 
+## Desktop packaging
+
+The staged server tree is **arch-specific** (`sharp`, `@embedded-postgres/<platform>` and the agent
+runtimes are native binaries), so each architecture needs its own tree:
+
+| Tree | Arch | How to produce |
+|---|---|---|
+| `.stage/server` | native | `npm run stage` |
+| `.stage/server-x64` | Intel | `PAPERCLIP_SHELL_TARGET_ARCH=x64 npm run stage` |
+
+Cross-arch staging works from either host arch because npm is told to fetch the other arch's
+binaries (`npm install --cpu=x64 --os=darwin`). The runtime `require()` probe cannot cross-load, so
+for a non-native tree `preflight` verifies the Mach-O architecture of `initdb` + `sharp` instead and
+defers the load test to the packaged smoke test.
+
+```bash
+# native arch only
+PAPERCLIP_REPO=~/pix/paperclip npm run package:mac
+
+# both Apple Silicon and Intel (needs both stage trees; ~1.6 GB each)
+PAPERCLIP_SHELL_TARGET_ARCH=x64 PAPERCLIP_REPO=~/pix/paperclip npm run stage
+PAPERCLIP_REPO=~/pix/paperclip npm run package:mac:both
+```
+
+Re-staging a tree you already installed is cheap — reuse the expensive closure with
+`PAPERCLIP_SHELL_SKIP_INSTALL=1` (plus `PAPERCLIP_SHELL_SKIP_BUILD=1 PAPERCLIP_SHELL_SKIP_PACK=1`
+to also reuse the built outputs and packed tarballs).
+
 ## Mobile quick start (mode A: self-hosted server)
 
 ```bash
