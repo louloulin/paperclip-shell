@@ -11,6 +11,8 @@ import { checkForUpdates, currentUpdaterStatus, initUpdater, updaterDisabledReas
 import { defaultLogBundleName, exportLogs } from "./logs.js";
 import { openAboutWindow } from "./about.js";
 import { runVerification } from "./verify.js";
+import { installShellFrame } from "./frame.js";
+import { SHELL_BG } from "./theme.js";
 
 const moduleDir = path.dirname(fileURLToPath(import.meta.url));
 const SMOKE = process.env.PAPERCLIP_DESKTOP_SMOKE === "1";
@@ -56,7 +58,9 @@ function createWindow(): BrowserWindow {
     minWidth: 960,
     minHeight: 640,
     show: false,
-    backgroundColor: "#18181b",
+    // One background colour for the window, the loading screen and About: no
+    // white flash and no seam between native chrome and content.
+    backgroundColor: SHELL_BG,
     title: "Paperclip",
     webPreferences: {
       preload: path.join(moduleDir, "preload.cjs"),
@@ -65,6 +69,7 @@ function createWindow(): BrowserWindow {
       sandbox: true,
     },
   });
+  installShellFrame(window.webContents);
   window.once("ready-to-show", () => window.show());
   window.webContents.setWindowOpenHandler(({ url }) => {
     void shell.openExternal(url);
@@ -293,6 +298,7 @@ async function boot(): Promise<void> {
     } else if (VERIFY) {
       const failures = await runVerification({
         tray,
+        window: mainWindow,
         serverUrl: supervisor?.baseUrl ?? null,
         serverVersion,
       });

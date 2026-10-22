@@ -1,5 +1,6 @@
 import { BrowserWindow, app } from "electron";
 import { dataHome, logsDir } from "./paths.js";
+import { backdropHtml, logoHtml, shellCss, SHELL_BG } from "./theme.js";
 
 /**
  * The About window (M4).
@@ -8,6 +9,9 @@ import { dataHome, logsDir } from "./paths.js";
  * information a support request actually needs is the *pair* of versions (the
  * shell and the Paperclip server it runs), the runtime, and where the data
  * lives — so this is a small dedicated window instead of a message box.
+ *
+ * It uses the same tokens, backdrop and 1px edge as the loading screen so the
+ * shell reads as one surface.
  */
 
 export interface AboutInfo {
@@ -15,6 +19,8 @@ export interface AboutInfo {
   serverVersion: string | null;
   updateState: string;
   updateMessage: string;
+  /** Preview harness override; the app always reports `app.getVersion()`. */
+  shellVersion?: string;
 }
 
 function escapeHtml(value: string): string {
@@ -24,40 +30,101 @@ function escapeHtml(value: string): string {
     .replace(/>/g, "&gt;");
 }
 
-function row(label: string, value: string): string {
-  return `<div class="row"><span class="k">${escapeHtml(label)}</span><span class="v">${escapeHtml(value)}</span></div>`;
+function row(label: string, value: string, mono = false): string {
+  return `<div class="row"><span class="k">${escapeHtml(label)}</span><span class="v${mono ? " mono" : ""}">${escapeHtml(value)}</span></div>`;
+}
+
+function section(title: string, rows: string): string {
+  return `<div class="section"><div class="section-title">${escapeHtml(title)}</div>${rows}</div>`;
 }
 
 export function aboutHtml(info: AboutInfo): string {
-  const rows = [
-    row("Paperclip Desktop", app.getVersion()),
-    row("Paperclip Server", info.serverVersion ?? "not running"),
-    row("Server URL", info.serverUrl ?? "not running"),
-    row("Electron", process.versions.electron ?? "n/a"),
-    row("Chromium", process.versions.chrome ?? "n/a"),
-    row("Node", process.versions.node),
-    row("Platform", `${process.platform} ${process.arch}`),
-    row("Updates", `${info.updateState} — ${info.updateMessage}`),
-    row("Data folder", dataHome()),
-    row("Logs folder", logsDir()),
-  ].join("\n");
+  const version = info.shellVersion ?? app.getVersion();
+  const server = section(
+    "Server",
+    [
+      row("Paperclip Server", info.serverVersion ?? "not running"),
+      row("Server URL", info.serverUrl ?? "not running", true),
+      row("Updates", `${info.updateState} — ${info.updateMessage}`),
+    ].join(""),
+  );
+  const runtime = section(
+    "Runtime",
+    [
+      row("Electron", process.versions.electron ?? "n/a"),
+      row("Chromium", process.versions.chrome ?? "n/a"),
+      row("Node", process.versions.node),
+      row("Platform", `${process.platform} ${process.arch}`),
+    ].join(""),
+  );
+  const storage = section(
+    "Storage",
+    [row("Data folder", dataHome(), true), row("Logs folder", logsDir(), true)].join(""),
+  );
 
-  return `<!doctype html><html><head><meta charset="utf-8"><title>About Paperclip</title>
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>About Paperclip</title>
 <style>
-  :root { color-scheme: dark; }
-  body { margin:0; padding:28px 30px; background:#18181b; color:#e4e4e7;
-         font:13px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
-  h1 { font-size:16px; margin:0 0 4px; }
-  p.sub { margin:0 0 18px; color:#71717a; font-size:12px; }
-  .row { display:flex; gap:14px; padding:5px 0; border-bottom:1px solid #27272a; }
-  .row:last-child { border-bottom:none; }
-  .k { flex:0 0 130px; color:#a1a1aa; }
-  .v { flex:1 1 auto; word-break:break-all; }
+${shellCss()}
+body { overflow: auto; }
+.card {
+  width: min(540px, calc(100vw - 40px));
+  padding: 26px 28px 22px;
+}
+.head { display: flex; align-items: center; gap: 15px; }
+.logo { width: 56px; height: 56px; }
+.logo .tile { border-radius: 16px; }
+.logo svg { width: 30px; height: 30px; }
+.logo .halo { inset: -7px; border-radius: 20px; }
+h1 { margin: 0; font-size: 16px; font-weight: 600; letter-spacing: 0.01em; }
+.meta { margin: 2px 0 0; font-size: 11.5px; color: var(--shell-muted); font-variant-numeric: tabular-nums; }
+.sub { margin: 16px 0 4px; color: var(--shell-muted); font-size: 12px; }
+.section { margin-top: 16px; }
+.section-title {
+  margin-bottom: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--shell-faint);
+}
+.row {
+  display: flex;
+  gap: 14px;
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.055);
+  font-size: 12px;
+}
+.row:last-child { border-bottom: none; }
+.k { flex: 0 0 124px; color: var(--shell-muted); }
+.v { flex: 1 1 auto; word-break: break-all; }
+.v.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: #d4d4d8;
+  /* Break after path separators first, not inside a directory name. */
+  word-break: normal;
+  overflow-wrap: anywhere;
+}
+.foot { margin-top: 16px; color: var(--shell-faint); font-size: 11px; }
 </style></head>
 <body>
-  <h1>Paperclip Desktop</h1>
-  <p class="sub">A local Paperclip workspace running on this machine.</p>
-  ${rows}
+${backdropHtml("about")}
+<main class="scene">
+  <section class="card" role="document">
+    <div class="head">
+      ${logoHtml({ animated: false })}
+      <div>
+        <h1>Paperclip Desktop</h1>
+        <p class="meta">Version ${escapeHtml(version)} · ${escapeHtml(process.platform)} ${escapeHtml(process.arch)}</p>
+      </div>
+    </div>
+    <p class="sub">A local Paperclip workspace running on this machine. No account or external service is required.</p>
+    ${server}
+    ${runtime}
+    ${storage}
+    <div class="foot">Paperclip Desktop ${escapeHtml(version)}</div>
+  </section>
+</main>
 </body></html>`;
 }
 
@@ -70,14 +137,16 @@ export function openAboutWindow(info: AboutInfo): BrowserWindow {
     return aboutWindow;
   }
   aboutWindow = new BrowserWindow({
-    width: 520,
-    height: 520,
-    resizable: false,
+    width: 660,
+    height: 740,
+    minWidth: 520,
+    minHeight: 560,
+    resizable: true,
     minimizable: false,
     maximizable: false,
     fullscreenable: false,
     title: "About Paperclip",
-    backgroundColor: "#18181b",
+    backgroundColor: SHELL_BG,
     webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
   aboutWindow.on("closed", () => {

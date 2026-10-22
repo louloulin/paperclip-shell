@@ -1,5 +1,5 @@
-import { app } from "electron";
-import { existsSync, readFileSync } from "node:fs";
+import { app, type BrowserWindow } from "electron";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { currentAboutWindow, openAboutWindow } from "./about.js";
@@ -19,6 +19,7 @@ import type { ShellTray } from "./tray.js";
 
 export interface VerifyContext {
   tray: ShellTray | null;
+  window: BrowserWindow | null;
   serverUrl: string | null;
   serverVersion: string | null;
 }
@@ -32,6 +33,51 @@ function record(name: string, ok: boolean, detail: string): void {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Optional visual evidence: PAPERCLIP_DESKTOP_CAPTURE_DIR=<dir>. */
+function captureDir(): string | null {
+  const dir = process.env.PAPERCLIP_DESKTOP_CAPTURE_DIR?.trim();
+  return dir ? path.resolve(dir) : null;
+}
+
+async function capture(window: BrowserWindow | null, name: string): Promise<void> {
+  const dir = captureDir();
+  if (!dir || !window || window.isDestroyed()) return;
+  try {
+    mkdirSync(dir, { recursive: true });
+    const image = await window.webContents.capturePage();
+    const file = path.join(dir, name);
+    writeFileSync(file, image.toPNG());
+    process.stdout.write(`[verify] captured ${file}\n`);
+  } catch (error) {
+    process.stdout.write(`[verify] capture failed: ${String(error)}\n`);
+  }
+}
+
+async function verifyFrame(ctx: VerifyContext): Promise<void> {
+  const window = ctx.window;
+  if (!window || window.isDestroyed()) {
+    record("frame: unified edge is present on the served UI", false, "no main window");
+    return;
+  }
+  // insertCSS is asynchronous; give the dom-ready handler a moment to land.
+  let style: { border: string; position: string; pointer: string } | null = null;
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    style = await window.webContents.executeJavaScript(
+      `(() => {
+         const s = getComputedStyle(document.body, "::after");
+         return { border: s.borderTopWidth, position: s.position, pointer: s.pointerEvents };
+       })()`,
+    );
+    if (style.border === "1px") break;
+    await sleep(200);
+  }
+  record(
+    "frame: unified edge is present on the served UI",
+    style?.border === "1px" && style.position === "fixed" && style.pointer === "none",
+    JSON.stringify(style),
+  );
 }
 
 async function verifyTray(ctx: VerifyContext): Promise<void> {
@@ -78,6 +124,15 @@ async function verifyAbout(ctx: VerifyContext): Promise<void> {
       hasVersion && hasServer,
       `version=${version} server=${ctx.serverVersion ?? "n/a"}`,
     );
+    const edge = await window.webContents.executeJavaScript(
+      `getComputedStyle(document.body, "::after").borderTopWidth`,
+    );
+    record(
+      "about: uses the same shell edge as the main window",
+      edge === "1px",
+      `borderTopWidth=${edge}`,
+    );
+    await capture(window, "about-window.png");
   } catch (error) {
     record("about: window renders version and server info", false, String(error));
   } finally {
@@ -128,6 +183,9 @@ async function verifyUpdater(): Promise<void> {
 /** Run every check; returns the number of failures. */
 export async function runVerification(ctx: VerifyContext): Promise<number> {
   process.stdout.write("[verify] starting in-app verification\n");
+  await verifyFrame(ctx);
+  await sleep(600);
+  await capture(ctx.window, "main-window.png");
   await verifyTray(ctx);
   await verifyAbout(ctx);
   verifyLogExport(ctx);

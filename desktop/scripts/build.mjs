@@ -32,6 +32,21 @@ const result = await build({
   metafile: true,
 });
 
+// Shell-owned pages, for scripts/preview-shell.cjs. Bundling them separately
+// keeps the preview harness free of the server/runtime wiring.
+await build({
+  entryPoints: {
+    "preview-exports": path.join(desktopRoot, "src", "preview-exports.ts"),
+  },
+  outdir,
+  bundle: true,
+  platform: "node",
+  target: "node22",
+  format: "esm",
+  external: ["electron"],
+  logLevel: "warning",
+});
+
 // The preload script must be CommonJS: Electron loads preload scripts as CJS.
 await build({
   entryPoints: { preload: path.join(desktopRoot, "src", "preload.ts") },
