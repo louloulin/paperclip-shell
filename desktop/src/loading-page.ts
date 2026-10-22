@@ -1,4 +1,9 @@
-import { backdropHtml, logoHtml, shellCss } from "./theme.js";
+import { backdropHtml, dragbarHtml, logoHtml, shellCss } from "./theme.js";
+
+export interface PageOptions {
+  /** `titleBarStyle: "hiddenInset"`: reserve room for the traffic lights. */
+  titleBarInset?: boolean;
+}
 
 /**
  * Startup screens rendered in the window before the server is reachable.
@@ -30,10 +35,10 @@ function stagesHtml(): string {
   ).join("\n");
 }
 
-export function loadingPage(): string {
+export function loadingPage({ titleBarInset = false }: PageOptions = {}): string {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Paperclip</title>
 <style>
-${shellCss()}
+${shellCss({ titleBarInset })}
 .card { width: min(432px, calc(100vw - 48px)); padding: 28px 30px 22px; }
 .head { display: flex; align-items: center; gap: 16px; }
 .heading { min-width: 0; }
@@ -162,6 +167,7 @@ h1 {
 .hint.show { opacity: 1; transform: none; }
 </style></head>
 <body>
+${titleBarInset ? dragbarHtml() : ""}
 ${backdropHtml("loading")}
 <main class="scene">
   <section class="card" role="status" aria-live="polite">
@@ -229,10 +235,14 @@ ${stagesHtml()}
 </body></html>`;
 }
 
-export function errorPage(message: string, logsPath: string): string {
+export function errorPage(
+  message: string,
+  logsPath: string,
+  { titleBarInset = false }: PageOptions = {},
+): string {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Paperclip</title>
 <style>
-${shellCss()}
+${shellCss({ titleBarInset })}
 .card {
   width: min(660px, calc(100vw - 48px));
   max-height: calc(100vh - 64px);
@@ -288,6 +298,7 @@ pre {
 .foot .dot { width: 4px; height: 4px; border-radius: 50%; background: var(--shell-faint); }
 </style></head>
 <body>
+${titleBarInset ? dragbarHtml() : ""}
 ${backdropHtml("error")}
 <main class="scene">
   <section class="card" role="alert">

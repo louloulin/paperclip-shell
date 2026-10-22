@@ -17,24 +17,50 @@ export const PAPERCLIP_PATH =
   "M 412 306 V 702 a 86 86 0 0 0 172 0 V 274 a 122 122 0 0 0 -244 0 V 750 a 172 172 0 0 0 344 0 V 338";
 
 /**
- * The same hairline ring around the content viewport in every window. Injected
- * into the served UI with `webContents.insertCSS` (no DOM or source changes).
+ * macOS runs with `titleBarStyle: "hiddenInset"`: there is no native title bar,
+ * so the traffic lights sit over the app itself. That needs a draggable band at
+ * the top and a matching inset, otherwise the first row of the UI would sit
+ * under the lights.
  */
-export const SHELL_FRAME_CSS = `
+export const TITLEBAR_INSET = 30;
+export const DRAGBAR_ID = "paperclip-drag-strip";
+
+/**
+ * Chrome injected into the served Paperclip UI with `webContents.insertCSS`
+ * (no source or DOM-shape changes beyond one transparent drag strip).
+ *
+ * There is deliberately NO border around the viewport: a hairline under the
+ * title bar reads as a separate frame and breaks the illusion that the window
+ * chrome and the app are one surface.
+ */
+export function injectedChromeCss({ inset = true } = {}): string {
+  return `
 html { background-color: ${SHELL_BG}; }
-body::after {
-  content: "";
+${
+  inset
+    ? `
+body {
+  padding-top: ${TITLEBAR_INSET}px !important;
+  box-sizing: border-box !important;
+}
+#${DRAGBAR_ID} {
   position: fixed;
-  inset: 0;
-  z-index: 2147483647;
-  pointer-events: none;
-  border: 1px solid rgba(255, 255, 255, 0.075);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.055);
+  top: 0;
+  /* Leave the traffic lights (and the app's skip link at top-left) clickable. */
+  left: 80px;
+  right: 0;
+  height: ${TITLEBAR_INSET}px;
+  z-index: 2147483646;
+  -webkit-app-region: drag;
+}
+`
+    : ""
 }
 `;
+}
 
-/** Shared tokens, reset, animated backdrop and the unified edge. */
-export function shellCss(): string {
+/** Shared tokens, reset, animated backdrop. */
+export function shellCss({ titleBarInset = false } = {}): string {
   return `
 :root {
   color-scheme: dark;
@@ -58,16 +84,6 @@ body {
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
 }
-/* Unified edge: byte-identical to SHELL_FRAME_CSS. */
-body::after {
-  content: "";
-  position: fixed;
-  inset: 0;
-  z-index: 2147483647;
-  pointer-events: none;
-  border: 1px solid rgba(255, 255, 255, 0.075);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.055);
-}
 .scene {
   position: relative;
   z-index: 2;
@@ -75,7 +91,20 @@ body::after {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 32px;
+  padding: ${titleBarInset ? 32 + TITLEBAR_INSET : 32}px 32px 32px;
+}
+${
+  titleBarInset
+    ? `.shell-dragbar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: ${TITLEBAR_INSET}px;
+  z-index: 3;
+  -webkit-app-region: drag;
+}`
+    : ""
 }
 .aurora {
   position: fixed;
@@ -308,6 +337,11 @@ export function particlesHtml(count = 14): string {
     return `<span style="--x:${x}%;--y:${y}%;--s:${size}px;--d:${duration}s;--delay:${delay}s"></span>`;
   }).join("");
   return `<div class="particles" aria-hidden="true">${specks}</div>`;
+}
+
+/** Draggable band for `titleBarStyle: "hiddenInset"` windows. */
+export function dragbarHtml(): string {
+  return `<div class="shell-dragbar" aria-hidden="true"></div>`;
 }
 
 export function backdropHtml(variant: "loading" | "error" | "about" = "loading"): string {

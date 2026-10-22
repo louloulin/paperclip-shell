@@ -58,24 +58,27 @@ async function capture(window: BrowserWindow | null, name: string): Promise<void
 async function verifyFrame(ctx: VerifyContext): Promise<void> {
   const window = ctx.window;
   if (!window || window.isDestroyed()) {
-    record("frame: unified edge is present on the served UI", false, "no main window");
+    record("chrome: title bar is integrated with the app", false, "no main window");
     return;
   }
-  // insertCSS is asynchronous; give the dom-ready handler a moment to land.
-  let style: { border: string; position: string; pointer: string } | null = null;
+  // insertCSS + the drag strip land on dom-ready; give them a moment.
+  let style: { dragbar: boolean; paddingTop: string; seam: string } | null = null;
   for (let attempt = 0; attempt < 10; attempt += 1) {
     style = await window.webContents.executeJavaScript(
-      `(() => {
-         const s = getComputedStyle(document.body, "::after");
-         return { border: s.borderTopWidth, position: s.position, pointer: s.pointerEvents };
-       })()`,
+      `(() => ({
+         dragbar: Boolean(document.getElementById("paperclip-drag-strip")),
+         paddingTop: getComputedStyle(document.body).paddingTop,
+         seam: getComputedStyle(document.body, "::after").borderTopWidth,
+       }))()`,
     );
-    if (style.border === "1px") break;
+    if (style.dragbar) break;
     await sleep(200);
   }
+  // The 30px band holds the traffic lights and is draggable; a 0px ::after
+  // border proves there is no hairline between title bar and content.
   record(
-    "frame: unified edge is present on the served UI",
-    style?.border === "1px" && style.position === "fixed" && style.pointer === "none",
+    "chrome: title bar is integrated with the app",
+    style?.dragbar === true && style.paddingTop === "30px" && style.seam === "0px",
     JSON.stringify(style),
   );
 }
@@ -124,13 +127,17 @@ async function verifyAbout(ctx: VerifyContext): Promise<void> {
       hasVersion && hasServer,
       `version=${version} server=${ctx.serverVersion ?? "n/a"}`,
     );
-    const edge = await window.webContents.executeJavaScript(
-      `getComputedStyle(document.body, "::after").borderTopWidth`,
+    const chrome = await window.webContents.executeJavaScript(
+      `({
+         dragbar: Boolean(document.querySelector(".shell-dragbar")),
+         paddingTop: getComputedStyle(document.querySelector(".scene")).paddingTop,
+         seam: getComputedStyle(document.body, "::after").borderTopWidth,
+       })`,
     );
     record(
-      "about: uses the same shell edge as the main window",
-      edge === "1px",
-      `borderTopWidth=${edge}`,
+      "about: uses the same integrated chrome as the main window",
+      chrome.dragbar === true && chrome.paddingTop === "62px" && chrome.seam === "0px",
+      JSON.stringify(chrome),
     );
     await capture(window, "about-window.png");
   } catch (error) {

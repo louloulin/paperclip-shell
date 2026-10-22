@@ -75,6 +75,14 @@ app.whenReady().then(async () => {
   const window = makeWindow(WIDTH, HEIGHT);
   const loading = pages.loadingPage();
 
+  // 0. The hidden-inset variant used by the real macOS windows.
+  const insetHtml = pages.loadingPage({ titleBarInset: true });
+  check(
+    "chrome: hidden-inset variant reserves a draggable band",
+    insetHtml.includes('class="shell-dragbar"') && insetHtml.includes("padding: 62px"),
+    "dragbar + 30px inset present",
+  );
+
   // 1. Loading screen: first stage, then a deep migration stage, then hand-off.
   try {
     await loadHtml(window, loading);
@@ -186,6 +194,7 @@ app.whenReady().then(async () => {
         updateState: "idle",
         updateMessage: "Ready to check",
         shellVersion: "0.3.1",
+        titleBarInset: false,
       }),
     );
     await sleep(900);

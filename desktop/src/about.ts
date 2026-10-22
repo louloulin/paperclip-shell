@@ -1,6 +1,12 @@
 import { BrowserWindow, app } from "electron";
 import { dataHome, logsDir } from "./paths.js";
-import { backdropHtml, logoHtml, shellCss, SHELL_BG } from "./theme.js";
+import {
+  backdropHtml,
+  dragbarHtml,
+  logoHtml,
+  shellCss,
+  SHELL_BG,
+} from "./theme.js";
 
 /**
  * The About window (M4).
@@ -21,6 +27,8 @@ export interface AboutInfo {
   updateMessage: string;
   /** Preview harness override; the app always reports `app.getVersion()`. */
   shellVersion?: string;
+  /** `titleBarStyle: "hiddenInset"`: reserve room for the traffic lights. */
+  titleBarInset?: boolean;
 }
 
 function escapeHtml(value: string): string {
@@ -40,6 +48,7 @@ function section(title: string, rows: string): string {
 
 export function aboutHtml(info: AboutInfo): string {
   const version = info.shellVersion ?? app.getVersion();
+  const titleBarInset = info.titleBarInset ?? process.platform === "darwin";
   const server = section(
     "Server",
     [
@@ -64,7 +73,7 @@ export function aboutHtml(info: AboutInfo): string {
 
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>About Paperclip</title>
 <style>
-${shellCss()}
+${shellCss({ titleBarInset })}
 body { overflow: auto; }
 .card {
   width: min(540px, calc(100vw - 40px));
@@ -108,6 +117,7 @@ h1 { margin: 0; font-size: 16px; font-weight: 600; letter-spacing: 0.01em; }
 .foot { margin-top: 16px; color: var(--shell-faint); font-size: 11px; }
 </style></head>
 <body>
+${titleBarInset ? dragbarHtml() : ""}
 ${backdropHtml("about")}
 <main class="scene">
   <section class="card" role="document">
@@ -147,6 +157,12 @@ export function openAboutWindow(info: AboutInfo): BrowserWindow {
     fullscreenable: false,
     title: "About Paperclip",
     backgroundColor: SHELL_BG,
+    ...(process.platform === "darwin"
+      ? {
+          titleBarStyle: "hiddenInset" as const,
+          trafficLightPosition: { x: 18, y: 17 },
+        }
+      : {}),
     webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
   aboutWindow.on("closed", () => {

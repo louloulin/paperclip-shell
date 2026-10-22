@@ -17,6 +17,9 @@ import { SHELL_BG } from "./theme.js";
 const moduleDir = path.dirname(fileURLToPath(import.meta.url));
 const SMOKE = process.env.PAPERCLIP_DESKTOP_SMOKE === "1";
 const VERIFY = process.env.PAPERCLIP_DESKTOP_VERIFY === "1";
+// macOS: no native title bar; traffic lights sit over the app, which reserves
+// a 30px band. Other platforms keep their native frame.
+const CUSTOM_TITLEBAR = process.platform === "darwin";
 
 // Allow an isolated profile (used by the verifier and by anyone who wants a
 // second, throwaway instance). Must happen before any getPath("userData").
@@ -62,6 +65,12 @@ function createWindow(): BrowserWindow {
     // white flash and no seam between native chrome and content.
     backgroundColor: SHELL_BG,
     title: "Paperclip",
+    ...(CUSTOM_TITLEBAR
+      ? {
+          titleBarStyle: "hiddenInset" as const,
+          trafficLightPosition: { x: 18, y: 17 },
+        }
+      : {}),
     webPreferences: {
       preload: path.join(moduleDir, "preload.cjs"),
       contextIsolation: true,
@@ -69,7 +78,7 @@ function createWindow(): BrowserWindow {
       sandbox: true,
     },
   });
-  installShellFrame(window.webContents);
+  installShellFrame(window.webContents, { inset: CUSTOM_TITLEBAR });
   window.once("ready-to-show", () => window.show());
   window.webContents.setWindowOpenHandler(({ url }) => {
     void shell.openExternal(url);
@@ -234,7 +243,7 @@ async function restartServer(): Promise<void> {
   // Re-read the login shell: the user may have installed a CLI since launch.
   clearUserPathCache();
   await mainWindow.loadURL(
-    `data:text/html;charset=utf-8,${encodeURIComponent(loadingPage())}`,
+    `data:text/html;charset=utf-8,${encodeURIComponent(loadingPage({ titleBarInset: CUSTOM_TITLEBAR }))}`,
   );
   await boot();
 }
@@ -316,7 +325,9 @@ async function boot(): Promise<void> {
       // No log yet.
     }
     await mainWindow.loadURL(
-      `data:text/html;charset=utf-8,${encodeURIComponent(errorPage(`${message}\n\n${tail}`, logsDir()))}`,
+      `data:text/html;charset=utf-8,${encodeURIComponent(
+        errorPage(`${message}\n\n${tail}`, logsDir(), { titleBarInset: CUSTOM_TITLEBAR }),
+      )}`,
     );
     if (SMOKE || VERIFY) {
       quitting = true;
@@ -359,7 +370,7 @@ if (!gotLock) {
     });
     mainWindow = createWindow();
     await mainWindow.loadURL(
-      `data:text/html;charset=utf-8,${encodeURIComponent(loadingPage())}`,
+      `data:text/html;charset=utf-8,${encodeURIComponent(loadingPage({ titleBarInset: CUSTOM_TITLEBAR }))}`,
     );
     await boot();
   });
