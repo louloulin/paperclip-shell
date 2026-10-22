@@ -170,7 +170,15 @@ rmSync(workDir, { recursive: true, force: true });
 
 const passCount = (output.match(/^PASS: /gm) ?? []).length;
 const failCount = (output.match(/^FAIL: /gm) ?? []).length;
+const summary = output.match(/^\[verify\] (\d+)\/(\d+) checks passed$/m);
 log(STEP, `checks: ${passCount} passed, ${failCount} failed (exit ${code})`);
-if (code !== 0 || failCount > 0) {
+
+// A shell that dies before it can report (a bundling error, a crash on
+// startup) also exits 0 — the checks never ran. Only the app's own summary
+// line proves the checks really executed, so its absence is a failure.
+if (!summary) {
+  log(STEP, "FAIL: the app exited without reporting the in-app check results");
+  process.exitCode = 1;
+} else if (failCount > 0 || Number(summary[1]) !== Number(summary[2]) || code !== 0) {
   process.exitCode = 1;
 }
