@@ -17,7 +17,10 @@
     "package:mac": "node scripts/package.mjs --mac",
     "package:mac:both": "node scripts/package.mjs --mac --arm64 --x64",
     "package:win": "node scripts/package.mjs --win",
-    "package:linux": "node scripts/package.mjs --linux"
+    "package:linux": "node scripts/package.mjs --linux",
+    "verify": "node scripts/verify-shell.mjs",
+    "verify:dev": "node scripts/verify-shell.mjs --dev",
+    "icons": "electron scripts/make-icons.cjs"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
@@ -25,5 +28,8 @@
     "electron-builder": "^26.15.3",
     "esbuild": "^0.25.0",
     "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.9"
   }
 }

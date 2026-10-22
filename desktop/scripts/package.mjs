@@ -15,7 +15,8 @@
 // Packaging is per-platform: sharp, @embedded-postgres/<platform> and the agent
 // runtime packages are platform-specific binaries and cannot be cross-built.
 
-import { cpSync, existsSync, readdirSync, rmSync, statSync } from "node:fs";
+import { cpSync, existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { capture, desktopRoot, log, resolveElectronBinary, run, stageDirFor, stageServerEntry } from "./lib.mjs";
 
@@ -70,9 +71,31 @@ const builderEnv = {
   CSC_IDENTITY_AUTO_DISCOVERY: process.env.CSC_IDENTITY_AUTO_DISCOVERY ?? "false",
 };
 
-// 1. Bundle the shell.
+// 1. Bundle the shell, and make sure the app icon is current.
 run(process.execPath, [path.join(desktopRoot, "scripts", "build.mjs")]);
+if (targets.includes("--mac")) ensureIcons();
 log(STEP, `electron: ${resolveElectronBinary()}`);
+
+/**
+ * Regenerate the macOS icons when build/icon.svg has been edited since, or when
+ * a generated icon is missing. The tray template image comes out of the same
+ * script, and electron-builder fails the build when a declared extraResource
+ * does not exist — so every generated output is checked here.
+ */
+function ensureIcons() {
+  const svg = path.join(desktopRoot, "build", "icon.svg");
+  const outputs = [
+    path.join(desktopRoot, "build", "icon.icns"),
+    path.join(desktopRoot, "build", "trayTemplate.png"),
+  ];
+  if (!existsSync(svg)) return;
+  const svgMtime = statSync(svg).mtimeMs;
+  const stale = outputs.some((file) => !existsSync(file) || statSync(file).mtimeMs < svgMtime);
+  if (!stale) return;
+  log(STEP, "icons are missing or older than build/icon.svg — regenerating");
+  // Rendering runs inside Electron (see scripts/make-icons.cjs).
+  run(resolveElectronBinary(), [path.join(desktopRoot, "scripts", "make-icons.cjs")]);
+}
 
 // 2-4. Per architecture: build the unpacked app, drop in the staged server,
 // then build the installer from that exact bundle.
@@ -106,8 +129,59 @@ for (const arch of arches) {
         cwd: desktopRoot,
         env: builderEnv,
       });
+      writeUpdateFeed(archName);
     }
   }
+}
+
+/**
+ * Write the update metadata electron-updater expects next to the artifacts.
+ *
+ * macOS updates are applied from a zip (the dmg stays the artifact a user
+ * installs by hand), and the feed file is `latest-mac.yml` for that platform.
+ * The file is only written when an update feed is configured, because a build
+ * without a feed must not advertise updates to anybody.
+ */
+function writeUpdateFeed(archName) {
+  if (!process.env.PAPERCLIP_DESKTOP_UPDATE_URL?.trim()) {
+    // A feed file from an earlier build would advertise artifacts whose
+    // digests no longer match (every build rewrites them).
+    for (const name of ["latest-mac.yml", "latest.yml", "latest-linux.yml"]) {
+      rmSync(path.join(releaseDir, name), { force: true });
+    }
+    return;
+  }
+  const version = JSON.parse(readFileSync(path.join(desktopRoot, "package.json"), "utf8")).version;
+  const artifacts = [
+    { file: `Paperclip-${version}-${archName}-mac.zip`, channel: "latest-mac.yml" },
+    { file: `Paperclip-${version}-${archName}.dmg`, channel: "latest-mac.yml" },
+  ].filter((entry) => existsSync(path.join(releaseDir, entry.file)));
+  if (artifacts.length === 0) return;
+
+  const files = artifacts.map((entry) => {
+    const bytes = readFileSync(path.join(releaseDir, entry.file));
+    return {
+      url: entry.file,
+      sha512: createHash("sha512").update(bytes).digest("base64"),
+      size: bytes.length,
+    };
+  });
+  const primary = files[0];
+  const channel = artifacts[0].channel;
+  writeFileSync(
+    path.join(releaseDir, channel),
+    [
+      `version: ${version}`,
+      "files:",
+      ...files.map((file) => `  - url: ${file.url}\n    sha512: ${file.sha512}\n    size: ${file.size}`),
+      `path: ${primary.url}`,
+      `sha512: ${primary.sha512}`,
+      "releaseDate: '" + new Date().toISOString() + "'",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  log(STEP, `update feed written: ${channel} (version ${version}, ${files.length} artifact(s))`);
 }
 
 function findAppBundles(dir, depth = 0) {
@@ -163,7 +237,40 @@ function bundleServer(bundle, sourceDir, archName) {
   if (symlinks === 0) {
     throw new Error("postgres dylib alias symlinks were lost while copying the server tree");
   }
+  writeUpdateMetadata(bundle);
   log(STEP, `${path.basename(bundle)} [${archName}]: server bundled (${symlinks} symlinks preserved)`);
+}
+
+/**
+ * Embed the update feed in the bundle.
+ *
+ * electron-updater reads `app-update.yml` from the app's Resources directory.
+ * The feed is deliberately not compiled in: a self-hosted build must not point
+ * at somebody else's server. Packaging with PAPERCLIP_DESKTOP_UPDATE_URL set
+ * bakes the generic feed URL into the bundle.
+ */
+function writeUpdateMetadata(bundle) {
+  const feed = process.env.PAPERCLIP_DESKTOP_UPDATE_URL?.trim();
+  const resources = bundle.endsWith(".app")
+    ? path.join(bundle, "Contents", "Resources")
+    : path.join(bundle, "resources");
+  const target = path.join(resources, "app-update.yml");
+  if (!feed) {
+    if (existsSync(target)) rmSync(target, { force: true });
+    log(STEP, "no PAPERCLIP_DESKTOP_UPDATE_URL — updates stay disabled in this build");
+    return;
+  }
+  let url;
+  try {
+    url = new URL(feed);
+  } catch {
+    throw new Error(`PAPERCLIP_DESKTOP_UPDATE_URL is not a valid URL: ${feed}`);
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error(`PAPERCLIP_DESKTOP_UPDATE_URL must be http(s), got ${url.protocol}`);
+  }
+  writeFileSync(target, `provider: generic\nurl: ${url.toString().replace(/\/+$/, "")}\n`, "utf8");
+  log(STEP, `update feed embedded: ${url.toString()}`);
 }
 
 function countSymlinks(dir) {

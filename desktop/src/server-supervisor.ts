@@ -1,12 +1,15 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createWriteStream, mkdirSync, type WriteStream } from "node:fs";
 import { serverEntry, serverRoot, dataHome, logsDir, serverLogFile } from "./paths.js";
+import { resolveUserPath } from "./user-path.js";
 
 export interface SupervisorOptions {
   /** Fixed port. Default 0 -> let the server pick (detect-port) and report it. */
   port?: number;
   onLog?: (line: string) => void;
   onExit?: (info: { code: number | null; signal: NodeJS.Signals | null }) => void;
+  /** Reported once the shell PATH has been resolved, before the spawn. */
+  onEnvResolved?: (info: { pathSource: string; pathEntries: number }) => void;
 }
 
 export interface StartedServer {
@@ -19,9 +22,12 @@ const HEALTH_TIMEOUT_MS = Number(process.env.PAPERCLIP_DESKTOP_HEALTH_TIMEOUT_MS
 const SHUTDOWN_TIMEOUT_MS = 15_000;
 const DEFAULT_PORT = Number(process.env.PAPERCLIP_DESKTOP_PORT ?? 3187);
 
-function serverEnv(port: number): NodeJS.ProcessEnv {
+function serverEnv(port: number, userPath: string): NodeJS.ProcessEnv {
   return {
     ...process.env,
+    // A Finder-launched app gets a minimal PATH, which hides user-installed
+    // agent CLIs (claude, codex, ...) from the server's command resolution.
+    PATH: userPath,
     // Never inherit a developer's own Paperclip home / instance.
     PAPERCLIP_HOME: dataHome(),
     PAPERCLIP_INSTANCE_ID: "desktop",
@@ -45,7 +51,12 @@ export async function startServer(options: SupervisorOptions = {}): Promise<Star
 
   const standaloneNode = process.env.PAPERCLIP_DESKTOP_NODE_BIN?.trim();
   const command = standaloneNode || process.execPath;
-  const env = serverEnv(port);
+  const userPath = resolveUserPath();
+  options.onEnvResolved?.({
+    pathSource: userPath.source,
+    pathEntries: userPath.value.split(":").filter(Boolean).length,
+  });
+  const env = serverEnv(port, userPath.value);
   if (standaloneNode) delete env.ELECTRON_RUN_AS_NODE;
   else env.ELECTRON_RUN_AS_NODE = "1";
 

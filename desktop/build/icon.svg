@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!--
+    Paperclip app icon. Source of truth for build/icon.icns — regenerate with
+    `npm run icons` after editing. macOS icons are a rounded square inset from
+    the canvas edge (corner radius ~22.4% of the tile).
+  -->
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3f3f46"/>
+      <stop offset="1" stop-color="#1f1f23"/>
+    </linearGradient>
+    <linearGradient id="wire" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#d4d4d8"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="64" y="64" width="896" height="896" rx="200" fill="url(#tile)"/>
+  <rect x="65.5" y="65.5" width="893" height="893" rx="198.5" fill="none"
+        stroke="#ffffff" stroke-opacity="0.10" stroke-width="3"/>
+
+  <path d="M 412 306 V 702 a 86 86 0 0 0 172 0 V 274 a 122 122 0 0 0 -244 0 V 750 a 172 172 0 0 0 344 0 V 338"
+        fill="none" stroke="url(#wire)" stroke-width="56"
+        stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

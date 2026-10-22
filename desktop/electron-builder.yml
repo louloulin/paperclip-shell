@@ -23,12 +23,24 @@ asar: true
 npmRebuild: false
 buildDependenciesFromSource: false
 
+# The menu-bar icon has to exist as a real file on disk (a template image
+# cannot be read out of the asar on macOS).
+extraResources:
+  - from: build/trayTemplate.png
+    to: trayTemplate.png
+
 mac:
   category: public.app-category.productivity
+  # Generated from build/icon.svg by `npm run icons` (scripts/make-icons.cjs);
+  # package.mjs regenerates it when the svg is newer.
+  icon: build/icon.icns
   # One arch per run: scripts/package.mjs loops over the requested arches so a
   # prepackaged bundle can never be repackaged under the wrong arch label.
   target:
     - target: dmg
+    # electron-updater can only apply a macOS update from a zip; the dmg stays
+    # the artifact a user installs by hand.
+    - target: zip
   hardenedRuntime: true
   gatekeeperAssess: false
   entitlements: build/entitlements.mac.plist

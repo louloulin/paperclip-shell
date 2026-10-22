@@ -170,13 +170,26 @@ log(STEP, `staging into ${stageDir} ...`);
 // (a cross-arch closure can take ~11 min to build); refresh only the build
 // outputs and manifest around it.
 const preservedInstall = skipInstall && existsSync(path.join(stageDir, "node_modules"));
-for (const entry of ["dist", "skills", "ui-dist", "package.json"]) {
+const bundledSkillEntries = ["skills", "skills-releases"];
+for (const entry of ["dist", ...bundledSkillEntries, "ui-dist", "package.json"]) {
   rmSync(path.join(stageDir, entry), { recursive: true, force: true });
 }
 if (!preservedInstall) rmSync(stageDir, { recursive: true, force: true });
 for (const entry of ["dist", "skills"]) {
   const source = path.join(repo, "server", entry);
   if (existsSync(source)) cpSync(source, path.join(stageDir, entry), { recursive: true });
+}
+// Bundled agent skills live at the *repo root*, and the server resolves them
+// relative to its own root (resolveBundledSkillsRoot in company-skills.ts looks
+// at `<serverRoot>/skills` and `<cwd>/skills`, where cwd is the server root).
+// Without these the packaged app seeds an empty company skill catalog and any
+// agent that requests a bundled skill fails with
+// "Invalid company skill selection (unknown references: paperclipai/...)".
+for (const entry of bundledSkillEntries) {
+  const source = path.join(repo, entry);
+  if (!existsSync(source)) continue;
+  cpSync(source, path.join(stageDir, entry), { recursive: true });
+  log(STEP, `bundled skills: ${entry}`);
 }
 cpSync(path.join(repo, "ui", "dist"), path.join(stageDir, "ui-dist"), { recursive: true });
 
@@ -304,6 +317,8 @@ const checks = [
   [path.join(stageDir, "node_modules", "express"), "express"],
   [path.join(stageDir, "node_modules", "sharp"), "sharp (native)"],
   [path.join(stageDir, "node_modules", "embedded-postgres"), "embedded-postgres"],
+  [path.join(stageDir, "skills", "paperclip", "SKILL.md"), "bundled skill: paperclip"],
+  [path.join(stageDir, "skills-releases", "paperclip", "releases.json"), "bundled skill releases"],
 ];
 for (const [file, label] of checks) requireFile(file, label);
 const platformPostgres = path.join(

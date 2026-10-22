@@ -19,6 +19,15 @@ const result = await build({
   format: "esm",
   sourcemap: true,
   external: ["electron"],
+  // electron-updater (and the fs-extra chain behind it) is CommonJS and uses
+  // dynamic require("fs"). Bundling it into an ESM file therefore needs a real
+  // `require` binding in scope, which the banner provides.
+  banner: {
+    js: [
+      'import { createRequire as __createRequire } from "node:module";',
+      "const require = __createRequire(import.meta.url);",
+    ].join("\n"),
+  },
   logLevel: "warning",
   metafile: true,
 });
