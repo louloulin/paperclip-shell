@@ -28,6 +28,24 @@ export function logsDir(): string {
   return path.join(app.getPath("userData"), "logs");
 }
 
+/**
+ * Plugins the user has installed (one directory per plugin, each with a
+ * plugin.json manifest). Created on demand; may not exist yet.
+ */
+export function pluginsDir(): string {
+  return path.join(app.getPath("userData"), "plugins");
+}
+
+/**
+ * Plugin catalog bundled with the shell. Packaged:
+ * <app>/Contents/Resources/plugins (electron-builder extraResources).
+ * Dev: desktop/resources/plugins (staged by scripts/build.mjs).
+ */
+export function bundledPluginsDir(): string {
+  if (app.isPackaged) return path.join(process.resourcesPath, "plugins");
+  return path.resolve(moduleDir, "..", "resources", "plugins");
+}
+
 export function serverLogFile(): string {
   return path.join(logsDir(), "server.log");
 }

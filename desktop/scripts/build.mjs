@@ -2,8 +2,9 @@
 // Bundle the Electron main process and preload script with esbuild.
 
 import { build } from "esbuild";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { desktopRoot, log } from "./lib.mjs";
+import { desktopRoot, log, run } from "./lib.mjs";
 
 const STEP = "build";
 const outdir = path.join(desktopRoot, "dist");
@@ -75,3 +76,56 @@ await build({
 });
 
 log(STEP, `bundled ${Object.keys(result.metafile.inputs).length} inputs -> ${outdir}`);
+
+// --- plugins: stage the installable catalog into resources/plugins ----------
+//
+// The Chinese language pack lives in its own repository and is consumed as a
+// read-only build input (same rule as the Paperclip checkout): this script
+// builds it and stages the runtime files plus a shell-owned plugin.json.
+
+const pluginsOutDir = path.join(desktopRoot, "resources", "plugins");
+mkdirSync(pluginsOutDir, { recursive: true });
+
+function resolveZhPackRoot() {
+  const fromEnv = process.env.PAPERCLIP_ZH_PACK?.trim();
+  const candidate = fromEnv
+    ? path.resolve(fromEnv)
+    : path.resolve(desktopRoot, "..", "..", "paperclip-zh-pack");
+  return existsSync(path.join(candidate, "package.json")) ? candidate : null;
+}
+
+const zhPackRoot = resolveZhPackRoot();
+if (!zhPackRoot) {
+  log(
+    STEP,
+    "plugins: paperclip-zh-pack not found (set PAPERCLIP_ZH_PACK=<repo>) — plugin catalog stays empty",
+  );
+} else {
+  const pluginOut = path.join(pluginsOutDir, "paperclip-zh-pack");
+  if (process.env.PAPERCLIP_SHELL_SKIP_PLUGIN_BUILD !== "1") {
+    run(process.execPath, [path.join(zhPackRoot, "scripts", "build.mjs")], { cwd: zhPackRoot });
+  }
+  for (const file of ["dist/page-patch.js", "dist/content-script.js"]) {
+    if (!existsSync(path.join(zhPackRoot, file))) {
+      throw new Error(`paperclip-zh-pack is missing ${file} (build it first or unset PAPERCLIP_SHELL_SKIP_PLUGIN_BUILD)`);
+    }
+  }
+  const pkg = JSON.parse(readFileSync(path.join(zhPackRoot, "package.json"), "utf8"));
+  rmSync(pluginOut, { recursive: true, force: true });
+  mkdirSync(pluginOut, { recursive: true });
+  for (const file of ["dist/page-patch.js", "dist/content-script.js"]) {
+    copyFileSync(path.join(zhPackRoot, file), path.join(pluginOut, path.basename(file)));
+  }
+  const manifest = {
+    id: "paperclip-zh-pack",
+    name: "Paperclip 中文语言包",
+    version: typeof pkg.version === "string" ? pkg.version : "0.0.0",
+    description: "界面与接口消息汉化（词典精确替换，未命中回退原文）",
+    // Order mirrors the pack's own injection: the fetch patch installs first,
+    // then the DOM translator.
+    scripts: ["page-patch.js", "content-script.js"],
+    matchOrigins: ["http://127.0.0.1", "http://localhost"],
+  };
+  writeFileSync(path.join(pluginOut, "plugin.json"), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+  log(STEP, `plugins: staged paperclip-zh-pack@${manifest.version} -> ${pluginOut}`);
+}

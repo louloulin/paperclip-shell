@@ -3,3 +3,6 @@ dist/
 .stage/
 release/
 *.log
+
+# Staged plugin catalog (scripts/build.mjs; source lives in its own repo)
+resources/

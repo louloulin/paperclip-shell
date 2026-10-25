@@ -6,6 +6,14 @@ import { currentAboutWindow, openAboutWindow } from "./about.js";
 import { defaultLogBundleName, exportLogs } from "./logs.js";
 import { checkForUpdates, currentUpdaterStatus, updaterDisabledReason } from "./updater.js";
 import type { ShellTray } from "./tray.js";
+import {
+  installBundled,
+  isBundled,
+  isEnabled,
+  isInstalled,
+  setEnabled,
+  type AgentLanguage,
+} from "./plugins.js";
 
 /**
  * In-app verification (M3/M4).
@@ -22,6 +30,8 @@ export interface VerifyContext {
   window: BrowserWindow | null;
   serverUrl: string | null;
   serverVersion: string | null;
+  /** Reload the UI from the server (plugins toggle + reload through here). */
+  reloadUi: () => Promise<void>;
 }
 
 const results: Array<{ name: string; ok: boolean; detail: string }> = [];
@@ -55,6 +65,113 @@ async function capture(window: BrowserWindow | null, name: string): Promise<void
   }
 }
 
+const ZH_PACK_ID = "paperclip-zh-pack";
+
+/** Distinctive sidebar strings; shared with the pack's dictionary. */
+const ZH_MARKERS = ["新建任务", "仪表盘", "收件箱", "搜索", "智能体"];
+const EN_MARKERS = ["New Task", "Dashboard", "Inbox", "Search"];
+
+/**
+ * Wait until the body text satisfies `pred` (the SPA may take a while to
+ * mount after a reload, much longer under Rosetta). Returns the text.
+ */
+async function waitForUiText(
+  window: BrowserWindow,
+  pred: (text: string) => boolean,
+  what: string,
+): Promise<string> {
+  let last = "";
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    try {
+      const text = await window.webContents.executeJavaScript(`document.body.innerText`);
+      if (typeof text === "string") {
+        last = text;
+        if (pred(text)) return text;
+      }
+    } catch {
+      // Mid-navigation; keep polling.
+    }
+    await sleep(500);
+  }
+  throw new Error(`UI did not reach the expected state within 30s (${what}); text=${last.slice(0, 120)}`);
+}
+
+function writePackSettings(window: BrowserWindow, enabled: boolean, agentLanguage: AgentLanguage): Promise<void> {
+  const settings = { enabled, override: enabled ? "zh-CN" : "en", agentLanguage };
+  return window.webContents
+    .executeJavaScript(
+      `localStorage.setItem("paperclip-zh-pack.settings", ${JSON.stringify(JSON.stringify(settings))}); true`,
+    )
+    .then(() => undefined);
+}
+
+async function verifyPlugins(ctx: VerifyContext): Promise<void> {
+  const nameOn = "plugins: Chinese language pack installs and translates the UI";
+  const nameOff = "plugins: disabling the pack restores the original English UI";
+  const window = ctx.window;
+  if (!window || window.isDestroyed()) {
+    record(nameOn, false, "no main window");
+    record(nameOff, false, "no main window");
+    return;
+  }
+  if (!isBundled(ZH_PACK_ID)) {
+    const detail = `bundled pack missing (${isInstalled(ZH_PACK_ID) ? "installed but catalog empty" : "no catalog entry"})`;
+    record(nameOn, false, detail);
+    record(nameOff, false, detail);
+    return;
+  }
+  try {
+    // Install into this (fresh) profile, exactly like the menu command does.
+    installBundled(ZH_PACK_ID);
+    setEnabled(ZH_PACK_ID, true);
+    await writePackSettings(window, true, "auto");
+    await ctx.reloadUi();
+    const zhText = await waitForUiText(
+      window,
+      (text) => ZH_MARKERS.some((marker) => text.includes(marker)),
+      "translated sidebar",
+    );
+    const patchedZh = await window.webContents.executeJavaScript(
+      `window.__paperclipZhPackPatched === true`,
+    );
+    record(
+      nameOn,
+      patchedZh === true,
+      `patched=${patchedZh} translated=${ZH_MARKERS.filter((m) => zhText.includes(m)).join("/")} installed=${isInstalled(ZH_PACK_ID)} enabled=${isEnabled(ZH_PACK_ID)}`,
+    );
+
+    setEnabled(ZH_PACK_ID, false);
+    await writePackSettings(window, false, "auto");
+    await ctx.reloadUi();
+    const enText = await waitForUiText(
+      window,
+      (text) => EN_MARKERS.some((marker) => text.includes(marker)),
+      "english sidebar",
+    );
+    const patchedEn = await window.webContents.executeJavaScript(
+      `window.__paperclipZhPackPatched === true`,
+    );
+    const enOk =
+      patchedEn === false &&
+      EN_MARKERS.some((marker) => enText.includes(marker)) &&
+      !ZH_MARKERS.some((marker) => enText.includes(marker));
+    record(nameOff, enOk, `patched=${patchedEn} english=${EN_MARKERS.filter((m) => enText.includes(m)).join("/")}`);
+
+    // Leave the pack enabled so later checks (and screenshots) run on it.
+    setEnabled(ZH_PACK_ID, true);
+    await writePackSettings(window, true, "auto");
+    await ctx.reloadUi();
+    await waitForUiText(
+      window,
+      (text) => ZH_MARKERS.some((marker) => text.includes(marker)),
+      "translated sidebar (restored)",
+    );
+  } catch (error) {
+    record(nameOn, false, String(error));
+    record(nameOff, false, String(error));
+  }
+}
+
 async function verifyFrame(ctx: VerifyContext): Promise<void> {
   const window = ctx.window;
   if (!window || window.isDestroyed()) {
@@ -84,22 +201,31 @@ async function verifyFrame(ctx: VerifyContext): Promise<void> {
 
   // The shell sizes itself with h-dvh; that must be reduced by the band or the
   // bottom of the UI (composer, bottom nav) is clipped by body overflow:hidden.
-  const layout = await window.webContents.executeJavaScript(
-    `(() => {
-       const shell = document.querySelector(".h-dvh") ?? document.getElementById("root");
-       const rect = shell?.getBoundingClientRect();
-       return {
-         innerHeight: window.innerHeight,
-         rootBottom: rect ? Math.round(rect.bottom) : null,
-         docScrollHeight: document.documentElement.scrollHeight,
-       };
-     })()`,
-  );
+  // Polled: after plugin checks the app may still be mounting (slow under
+  // Rosetta), and a half-mounted shell would measure nonsense.
+  let layout: { innerHeight: number; rootBottom: number | null; docScrollHeight: number } | null = null;
+  let ok = false;
+  for (let attempt = 0; attempt < 10 && !ok; attempt += 1) {
+    layout = await window.webContents.executeJavaScript(
+      `(() => {
+         const shell = document.querySelector(".h-dvh") ?? document.getElementById("root");
+         const rect = shell?.getBoundingClientRect();
+         return {
+           innerHeight: window.innerHeight,
+           rootBottom: rect ? Math.round(rect.bottom) : null,
+           docScrollHeight: document.documentElement.scrollHeight,
+         };
+       })()`,
+    );
+    ok =
+      typeof layout.rootBottom === "number" &&
+      layout.rootBottom <= layout.innerHeight + 1 &&
+      layout.docScrollHeight <= layout.innerHeight + 1;
+    if (!ok) await sleep(400);
+  }
   record(
     "layout: the inset viewport fits without clipping the bottom",
-    typeof layout.rootBottom === "number" &&
-      layout.rootBottom <= layout.innerHeight + 1 &&
-      layout.docScrollHeight <= layout.innerHeight + 1,
+    ok,
     JSON.stringify(layout),
   );
 }
@@ -211,6 +337,9 @@ async function verifyUpdater(): Promise<void> {
 /** Run every check; returns the number of failures. */
 export async function runVerification(ctx: VerifyContext): Promise<number> {
   process.stdout.write("[verify] starting in-app verification\n");
+  // Plugins go first: the checks reload the window, and the shell/layout
+  // assertions below then run against the final (translated) UI.
+  await verifyPlugins(ctx);
   await verifyFrame(ctx);
   await sleep(600);
   await capture(ctx.window, "main-window.png");

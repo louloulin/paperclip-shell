@@ -24,10 +24,13 @@ npmRebuild: false
 buildDependenciesFromSource: false
 
 # The menu-bar icon has to exist as a real file on disk (a template image
-# cannot be read out of the asar on macOS).
+# cannot be read out of the asar on macOS). resources/plugins is the bundled
+# plugin catalog (scripts/build.mjs stages it; the directory always exists).
 extraResources:
   - from: build/trayTemplate.png
     to: trayTemplate.png
+  - from: resources/plugins
+    to: plugins
 
 mac:
   category: public.app-category.productivity

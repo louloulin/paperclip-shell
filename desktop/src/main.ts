@@ -1,8 +1,8 @@
-import { app, BrowserWindow, Menu, shell, dialog } from "electron";
+import { app, BrowserWindow, Menu, shell, dialog, ipcMain } from "electron";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { assertServerStaged, dataHome, logsDir, serverLogFile, serverRoot } from "./paths.js";
+import { assertServerStaged, dataHome, logsDir, pluginsDir, serverLogFile, serverRoot } from "./paths.js";
 import { startServer, type StartedServer } from "./server-supervisor.js";
 import { clearUserPathCache } from "./user-path.js";
 import { errorPage, loadingPage } from "./loading-page.js";
@@ -13,6 +13,18 @@ import { openAboutWindow } from "./about.js";
 import { runVerification } from "./verify.js";
 import { installShellFrame } from "./frame.js";
 import { SHELL_BG } from "./theme.js";
+import {
+  currentAgentLanguage,
+  installBundled,
+  isBundled,
+  isEnabled,
+  isInstalled,
+  packSettings,
+  rendererPayload,
+  setAgentLanguage,
+  setEnabled,
+  type AgentLanguage,
+} from "./plugins.js";
 
 const moduleDir = path.dirname(fileURLToPath(import.meta.url));
 const SMOKE = process.env.PAPERCLIP_DESKTOP_SMOKE === "1";
@@ -160,6 +172,85 @@ async function checkUpdatesAction(): Promise<void> {
   await checkForUpdates({ interactive: true, timeoutMs: 30_000 });
 }
 
+// --- plugins -----------------------------------------------------------------
+
+const ZH_PACK_ID = "paperclip-zh-pack";
+
+/**
+ * Write the pack settings into the page's localStorage mirror (the bus the
+ * pack reads on load), then reload so both worlds re-initialise cleanly —
+ * a same-page localStorage write fires no `storage` event.
+ */
+async function applyPackSettings(): Promise<void> {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const settings = packSettings();
+  try {
+    await mainWindow.webContents.executeJavaScript(
+      `localStorage.setItem("paperclip-zh-pack.settings", ${JSON.stringify(JSON.stringify(settings))}); true`,
+    );
+  } catch {
+    // No live page (still loading) — the reload below applies the settings.
+  }
+}
+
+async function reloadMainWindow(): Promise<void> {
+  if (!mainWindow || mainWindow.isDestroyed() || !supervisor) return;
+  await mainWindow.loadURL(supervisor.baseUrl);
+}
+
+async function toggleZhPack(): Promise<void> {
+  if (!isInstalled(ZH_PACK_ID)) {
+    const installed = installBundled(ZH_PACK_ID);
+    if (!installed) return;
+    setEnabled(ZH_PACK_ID, true);
+  } else {
+    setEnabled(ZH_PACK_ID, !isEnabled(ZH_PACK_ID));
+  }
+  installMenu();
+  await applyPackSettings();
+  await reloadMainWindow();
+}
+
+async function setAgentReplyLanguage(value: AgentLanguage): Promise<void> {
+  setAgentLanguage(value);
+  installMenu();
+  await applyPackSettings();
+  await reloadMainWindow();
+}
+
+function pluginsSubmenu(): Electron.MenuItemConstructorOptions[] {
+  const zhInstalled = isInstalled(ZH_PACK_ID);
+  const language = currentAgentLanguage();
+  const replyLanguage = (value: AgentLanguage, label: string): Electron.MenuItemConstructorOptions => ({
+    label,
+    type: "radio",
+    checked: language === value,
+    click: () => void setAgentReplyLanguage(value),
+  });
+  return [
+    {
+      label: "中文语言包 (Chinese language pack)",
+      type: "checkbox",
+      checked: zhInstalled && isEnabled(ZH_PACK_ID),
+      // A build without the staged catalog has nothing to install from.
+      enabled: zhInstalled || isBundled(ZH_PACK_ID),
+      click: () => void toggleZhPack(),
+    },
+    {
+      label: "智能体回复语言 (agent reply language)",
+      enabled: zhInstalled,
+      submenu: [
+        replyLanguage("auto", "跟随界面 (follow UI)"),
+        replyLanguage("zh-CN", "简体中文"),
+        replyLanguage("en", "English"),
+        replyLanguage("off", "不干预 (off)"),
+      ],
+    },
+    { type: "separator" },
+    { label: "打开插件文件夹 (open plugins folder)", click: () => void shell.openPath(pluginsDir()) },
+  ];
+}
+
 function installMenu(): void {
   const template: Electron.MenuItemConstructorOptions[] = [
     {
@@ -192,6 +283,10 @@ function installMenu(): void {
         { type: "separator" },
         { role: "togglefullscreen" },
       ],
+    },
+    {
+      label: "Plugins",
+      submenu: pluginsSubmenu(),
     },
     {
       label: "Help",
@@ -309,6 +404,10 @@ async function boot(): Promise<void> {
         window: mainWindow,
         serverUrl: supervisor?.baseUrl ?? null,
         serverVersion,
+        reloadUi: async () => {
+          if (!mainWindow || mainWindow.isDestroyed() || !supervisor) return;
+          await mainWindow.loadURL(supervisor.baseUrl);
+        },
       });
       quitting = true;
       await supervisor?.stop();
@@ -361,6 +460,11 @@ if (!gotLock) {
   });
 
   void app.whenReady().then(async () => {
+    // Plugin payloads are pulled by the preload over synchronous IPC, so this
+    // handler must exist before the first window loads.
+    ipcMain.on("plugins:renderer-payload", (event, href) => {
+      event.returnValue = rendererPayload(typeof href === "string" ? href : "");
+    });
     installMenu();
     installTray();
     initUpdater({
