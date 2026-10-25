@@ -47,6 +47,20 @@ await build({
   logLevel: "warning",
 });
 
+// The server bootstrap must be CommonJS: it runs under Electron's Node, where
+// a CJS entry is the most reliable form.
+await build({
+  entryPoints: { "server-bootstrap": path.join(desktopRoot, "src", "server-bootstrap.ts") },
+  outdir,
+  bundle: true,
+  platform: "node",
+  target: "node22",
+  format: "cjs",
+  outExtension: { ".js": ".cjs" },
+  external: ["electron"],
+  logLevel: "warning",
+});
+
 // The preload script must be CommonJS: Electron loads preload scripts as CJS.
 await build({
   entryPoints: { preload: path.join(desktopRoot, "src", "preload.ts") },

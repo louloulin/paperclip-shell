@@ -11,7 +11,7 @@
   "scripts": {
     "stage": "node scripts/stage-server.mjs",
     "preflight": "node scripts/preflight-runtime.mjs",
-    "probe": "node scripts/probe.mjs",
+    "probe": "node scripts/build.mjs && node scripts/probe.mjs",
     "build": "node scripts/build.mjs",
     "dev": "node scripts/dev.mjs",
     "preview": "node scripts/build.mjs && electron scripts/preview-shell.cjs",

@@ -81,6 +81,27 @@ async function verifyFrame(ctx: VerifyContext): Promise<void> {
     style?.dragbar === true && style.paddingTop === "30px" && style.seam === "0px",
     JSON.stringify(style),
   );
+
+  // The shell sizes itself with h-dvh; that must be reduced by the band or the
+  // bottom of the UI (composer, bottom nav) is clipped by body overflow:hidden.
+  const layout = await window.webContents.executeJavaScript(
+    `(() => {
+       const shell = document.querySelector(".h-dvh") ?? document.getElementById("root");
+       const rect = shell?.getBoundingClientRect();
+       return {
+         innerHeight: window.innerHeight,
+         rootBottom: rect ? Math.round(rect.bottom) : null,
+         docScrollHeight: document.documentElement.scrollHeight,
+       };
+     })()`,
+  );
+  record(
+    "layout: the inset viewport fits without clipping the bottom",
+    typeof layout.rootBottom === "number" &&
+      layout.rootBottom <= layout.innerHeight + 1 &&
+      layout.docScrollHeight <= layout.innerHeight + 1,
+    JSON.stringify(layout),
+  );
 }
 
 async function verifyTray(ctx: VerifyContext): Promise<void> {

@@ -43,6 +43,18 @@ body {
   padding-top: ${TITLEBAR_INSET}px !important;
   box-sizing: border-box !important;
 }
+/*
+ * The app sizes its shell with viewport units (h-dvh / min-h-dvh). Those still
+ * describe the FULL window, so with the 30px band above the page they make the
+ * shell 30px taller than the box it lives in — body overflow:hidden then cuts
+ * off the bottom of the UI. Every viewport-height utility must lose the band.
+ */
+.h-dvh { height: calc(100dvh - ${TITLEBAR_INSET}px) !important; }
+.min-h-dvh { min-height: calc(100dvh - ${TITLEBAR_INSET}px) !important; }
+.max-h-dvh { max-height: calc(100dvh - ${TITLEBAR_INSET}px) !important; }
+.h-screen { height: calc(100vh - ${TITLEBAR_INSET}px) !important; }
+.min-h-screen { min-height: calc(100vh - ${TITLEBAR_INSET}px) !important; }
+.max-h-screen { max-height: calc(100vh - ${TITLEBAR_INSET}px) !important; }
 #${DRAGBAR_ID} {
   position: fixed;
   top: 0;

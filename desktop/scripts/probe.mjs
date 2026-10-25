@@ -10,11 +10,13 @@
 //   5. POST /api/companies -> write path (create a company)
 //   6. WS /api/companies/<id>/events/ws -> realtime handshake
 //   7. POST a message on the created company (issue/thread write path)
-//   8. SIGTERM -> process exits within 15s
+//   8. empty-environment child spawn (the agent directory probe's call shape)
+//   9. SIGTERM -> process exits within 15s
 //
 // Everything is written under a throwaway PAPERCLIP_HOME; the CLI's
 // ~/.paperclip is never touched.
 
+import { spawn } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -75,7 +77,11 @@ async function main() {
   log(STEP, `stage: ${stageDir}`);
   log(STEP, `runtime: ${process.env.PAPERCLIP_DESKTOP_NODE_BIN || `${electron} (ELECTRON_RUN_AS_NODE)`}`);
 
-  child = spawnServer({ electronBinary: electron, env: serverEnv() });
+  child = spawnServer({
+    electronBinary: electron,
+    env: serverEnv(),
+    shimPath: path.join(home, "bin", "paperclip-node"),
+  });
   const stdout = [];
   const stderr = [];
   let detectedPort = PORT;
@@ -180,7 +186,36 @@ async function main() {
       );
     }
 
-    // 8. graceful shutdown
+    // 8. empty-environment child spawn (the agent directory probe's shape).
+    //    The server spawns children with `process.execPath` and, for the agent
+    //    directory probe, with an EMPTY environment. Under Electron that drops
+    //    ELECTRON_RUN_AS_NODE and the child tries to open a GUI app:
+    //    "Unable to find Electron app at ...". This reproduces that call shape
+    //    against the shim the server itself was given.
+    const shimPath = path.join(home, "bin", "paperclip-node");
+    const emptyEnvChild = await new Promise((resolve) => {
+      const probe = spawn(
+        shimPath,
+        ["-e", "process.stdout.write(process.versions.node)"],
+        { cwd: home, env: {}, stdio: ["ignore", "pipe", "pipe"] },
+      );
+      let out = "";
+      let err = "";
+      probe.stdout.on("data", (chunk) => (out += chunk.toString()));
+      probe.stderr.on("data", (chunk) => (err += chunk.toString()));
+      probe.on("exit", (code) => resolve({ code, out, err }));
+    });
+    if (emptyEnvChild.code !== 0 || !/^\d+\.\d+\.\d+/.test(emptyEnvChild.out)) {
+      throw new Error(
+        `empty-env child spawn failed (code=${emptyEnvChild.code}): ${emptyEnvChild.err.slice(0, 300)}`,
+      );
+    }
+    record(
+      "empty-env child spawn (agent directory probe shape)",
+      `node=${emptyEnvChild.out.trim()}`,
+    );
+
+    // 9. graceful shutdown
     const exitCode = await new Promise((resolve) => {
       const timer = setTimeout(() => resolve("timeout"), 15_000);
       child.once("exit", (code, signal) => {

@@ -6,8 +6,10 @@
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { ENTRY_ENV, SHIM_ENV, writeNodeShim } from "./node-shim.mjs";
 
 export const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 export const shellRoot = path.resolve(desktopRoot, "..");
@@ -77,19 +79,45 @@ export function resolveElectronBinary() {
  * Spawn the staged Paperclip server.
  * Default runtime is the Electron binary in `ELECTRON_RUN_AS_NODE` mode;
  * PAPERCLIP_DESKTOP_NODE_BIN switches to a standalone Node runtime instead.
+ *
+ * The server is started through the bundled bootstrap so that its
+ * `process.execPath` points at a Node shim: the server spawns children with
+ * that path and, for the agent directory probe, with an EMPTY environment —
+ * under Electron that would drop ELECTRON_RUN_AS_NODE and the child would try
+ * to open a GUI app.
  */
-export function spawnServer({ electronBinary, entry = stageServerEntry, env, cwd = stageDir }) {
+export function spawnServer({
+  electronBinary,
+  entry = stageServerEntry,
+  env,
+  cwd = stageDir,
+  shimPath,
+}) {
   const standalone = env.PAPERCLIP_DESKTOP_NODE_BIN?.trim();
   const command = standalone || electronBinary;
   const childEnv = { ...env };
   if (standalone) delete childEnv.ELECTRON_RUN_AS_NODE;
   else childEnv.ELECTRON_RUN_AS_NODE = "1";
 
-  return spawn(command, [entry], {
+  childEnv[ENTRY_ENV] = entry;
+  if (!standalone) {
+    const shim = writeNodeShim(
+      shimPath ?? path.join(os.tmpdir(), "paperclip-desktop-node"),
+      electronBinary,
+    );
+    childEnv[SHIM_ENV] = shim;
+  }
+
+  return spawn(command, [serverBootstrapEntry()], {
     cwd,
     env: childEnv,
     stdio: ["ignore", "pipe", "pipe"],
   });
+}
+
+/** The bundled bootstrap that loads the server with a Node-compatible execPath. */
+export function serverBootstrapEntry() {
+  return path.join(desktopRoot, "dist", "server-bootstrap.cjs");
 }
 
 export function compareNodeVersions(left, right) {

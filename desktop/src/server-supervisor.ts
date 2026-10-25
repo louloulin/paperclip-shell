@@ -1,7 +1,17 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createWriteStream, mkdirSync, type WriteStream } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { serverEntry, serverRoot, dataHome, logsDir, serverLogFile } from "./paths.js";
 import { resolveUserPath } from "./user-path.js";
+import { ENTRY_ENV, SHIM_ENV, writeNodeShim } from "./node-shim.js";
+
+const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+
+/** The bundled bootstrap that loads the server with a Node-compatible execPath. */
+export function serverBootstrapEntry(): string {
+  return path.join(moduleDir, "server-bootstrap.cjs");
+}
 
 export interface SupervisorOptions {
   /** Fixed port. Default 0 -> let the server pick (detect-port) and report it. */
@@ -60,7 +70,22 @@ export async function startServer(options: SupervisorOptions = {}): Promise<Star
   if (standaloneNode) delete env.ELECTRON_RUN_AS_NODE;
   else env.ELECTRON_RUN_AS_NODE = "1";
 
-  const child: ChildProcess = spawn(command, [serverEntry()], {
+  // The server spawns its own children with `process.execPath`, and the agent
+  // directory probe does so with an EMPTY environment. Under Electron that
+  // drops ELECTRON_RUN_AS_NODE and the child dies with "Unable to find
+  // Electron app at ...". The bootstrap points the server's process.execPath at
+  // a shim that re-exports the runtime as Node regardless of the environment.
+  const entry = serverEntry();
+  env[ENTRY_ENV] = entry;
+  if (!standaloneNode) {
+    const shim = writeNodeShim(
+      path.join(dataHome(), "bin", "paperclip-node"),
+      process.execPath,
+    );
+    env[SHIM_ENV] = shim;
+  }
+
+  const child: ChildProcess = spawn(command, [serverBootstrapEntry()], {
     cwd: serverRoot(),
     env,
     stdio: ["ignore", "pipe", "pipe"],

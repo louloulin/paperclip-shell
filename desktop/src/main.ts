@@ -294,7 +294,6 @@ async function boot(): Promise<void> {
     setTrayState({ phase: "running", serverUrl: supervisor.baseUrl });
     await setLoadingStage("ui");
     await mainWindow.loadURL(supervisor.baseUrl);
-
     if (SMOKE) {
       const title = await mainWindow.webContents.executeJavaScript(
         `({ title: document.title, rootChildren: document.getElementById("root")?.childElementCount ?? 0, href: location.href })`,
