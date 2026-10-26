@@ -26,16 +26,25 @@ contextBridge.exposeInMainWorld("paperclipDesktop", {
  */
 try {
   const payload = ipcRenderer.sendSync("plugins:renderer-payload", location.href) as
-    | { scripts?: unknown }
+    | { settings?: unknown; scripts?: unknown }
     | null;
+  const settings = typeof payload?.settings === "string" ? payload.settings : null;
   const scripts = Array.isArray(payload?.scripts) ? (payload?.scripts as string[]) : [];
   const sources = scripts.filter((source): source is string => typeof source === "string");
-  if (sources.length > 0) {
+  if (settings !== null) {
     const inject = () => {
-      for (const source of sources) {
-        void webFrame.executeJavaScript(source).catch(() => {
-          // A failing plugin must never break page load.
-        });
+      // The settings mirror must land before the pack reads it, and the pack's
+      // own manifest order matters (the fetch patch installs before the DOM
+      // translator), so the chain is awaited rather than fired in parallel.
+      const queue = [settings, ...sources];
+      let chain = Promise.resolve();
+      for (const source of queue) {
+        chain = chain
+          .then(() => webFrame.executeJavaScript(source))
+          .then(() => undefined)
+          .catch(() => {
+            // A failing plugin must never break page load.
+          });
       }
     };
     if (document.documentElement) {

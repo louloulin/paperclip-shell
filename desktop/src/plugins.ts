@@ -232,16 +232,37 @@ function readScript(file: string): string | null {
 }
 
 /**
+ * The settings bootstrap the preload runs before any plugin script.
+ *
+ * The pack reads its state from a localStorage mirror, and localStorage is
+ * keyed by origin *including the port*. The desktop server may come up on a
+ * different port after a restart, and a cleared profile has no mirror at all —
+ * in both cases the pack would fall back to its own default (`override:
+ * "auto"`), which resolves against `navigator.language` and silently leaves an
+ * English-locale user with an untranslated UI even though the pack is enabled.
+ * Writing the mirror on every navigation keeps this menu the single source of
+ * truth and makes the port irrelevant.
+ */
+function settingsBootstrap(): string {
+  const settings = packSettings();
+  const json = JSON.stringify(JSON.stringify(settings));
+  return `try { window.localStorage.setItem("paperclip-zh-pack.settings", ${json}); } catch (error) {}`;
+}
+
+/**
  * Main-world scripts to run for this URL, in injection order. Called from the
  * preload over synchronous IPC exactly once per navigation.
+ *
+ * `settings` is always present: it is the bootstrap above, not a plugin, so it
+ * must run before the first pack script even when no file was readable.
  */
-export function rendererPayload(href: string): { scripts: string[] } {
+export function rendererPayload(href: string): { settings: string; scripts: string[] } {
   const scripts: string[] = [];
   let origin = "";
   try {
     origin = new URL(href).origin;
   } catch {
-    return { scripts };
+    return { settings: settingsBootstrap(), scripts };
   }
   for (const plugin of listInstalled()) {
     if (!plugin.enabled) continue;
@@ -251,5 +272,5 @@ export function rendererPayload(href: string): { scripts: string[] } {
       if (source !== null) scripts.push(source);
     }
   }
-  return { scripts };
+  return { settings: settingsBootstrap(), scripts };
 }

@@ -99,6 +99,26 @@ so the script's exit code is the verdict. Set `PAPERCLIP_VERIFY_APP` to verify a
 - **Export logs…**: writes one self-contained text bundle (diagnostics header + every file in the logs
   directory, capped at 5 MB per file) and offers to reveal it.
 
+## Plugins and the Chinese language pack
+
+The shell has its own plugin mechanism, so add-ons stay out of the Paperclip checkout:
+
+- A plugin is a directory with a `plugin.json` manifest (`id`, `scripts`, `matchOrigins`). The build
+  stages a bundled catalog from each plugin's own repository into `Resources/plugins`; installing one
+  copies it into `<userData>/plugins`, which is where enable/disable state lives.
+- The sandboxed preload asks the main process once per navigation (synchronous IPC) for the scripts
+  that match the page origin and injects them into the page's main world in manifest order. They run
+  as page code with page privileges; a failing plugin cannot break page load.
+- **Plugins → 中文语言包** installs and toggles the standalone
+  [`paperclip-zh-pack`](../paperclip-zh-pack) (built from the sibling checkout; override the location
+  with `PAPERCLIP_ZH_PACK=<repo>`). **Plugins → 智能体回复语言** selects the language the agent is
+  asked to answer in.
+
+The pack reads its settings from a localStorage mirror, and localStorage is keyed by origin *including
+the port* — the server may come up on a different port next launch. The preload therefore rewrites the
+mirror from the shell's own state on every navigation, before any pack script runs, so the Plugins menu
+stays the single source of truth and a fresh origin still starts translated.
+
 ## Automatic updates
 
 Updates are **off unless a feed is configured** — a self-hosted build must not point at somebody

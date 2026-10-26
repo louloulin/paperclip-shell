@@ -11,8 +11,8 @@ import {
   isBundled,
   isEnabled,
   isInstalled,
+  setAgentLanguage,
   setEnabled,
-  type AgentLanguage,
 } from "./plugins.js";
 
 /**
@@ -96,35 +96,57 @@ async function waitForUiText(
   throw new Error(`UI did not reach the expected state within 30s (${what}); text=${last.slice(0, 120)}`);
 }
 
-function writePackSettings(window: BrowserWindow, enabled: boolean, agentLanguage: AgentLanguage): Promise<void> {
-  const settings = { enabled, override: enabled ? "zh-CN" : "en", agentLanguage };
-  return window.webContents
-    .executeJavaScript(
-      `localStorage.setItem("paperclip-zh-pack.settings", ${JSON.stringify(JSON.stringify(settings))}); true`,
-    )
-    .then(() => undefined);
+interface PackMirror {
+  enabled: boolean | null;
+  override: string | null;
+  agentLanguage: string | null;
+  raw: string | null;
+}
+
+/** Read the pack's localStorage mirror as the page sees it. */
+async function readPackMirror(window: BrowserWindow): Promise<PackMirror> {
+  const raw = await window.webContents.executeJavaScript(
+    `localStorage.getItem("paperclip-zh-pack.settings")`,
+  );
+  const text = typeof raw === "string" ? raw : null;
+  try {
+    const parsed = JSON.parse(text ?? "null") as Record<string, unknown> | null;
+    return {
+      enabled: typeof parsed?.enabled === "boolean" ? parsed.enabled : null,
+      override: typeof parsed?.override === "string" ? parsed.override : null,
+      agentLanguage: typeof parsed?.agentLanguage === "string" ? parsed.agentLanguage : null,
+      raw: text,
+    };
+  } catch {
+    return { enabled: null, override: null, agentLanguage: null, raw: text };
+  }
 }
 
 async function verifyPlugins(ctx: VerifyContext): Promise<void> {
   const nameOn = "plugins: Chinese language pack installs and translates the UI";
+  const nameFresh = "plugins: a fresh page origin still starts translated";
   const nameOff = "plugins: disabling the pack restores the original English UI";
   const window = ctx.window;
   if (!window || window.isDestroyed()) {
     record(nameOn, false, "no main window");
+    record(nameFresh, false, "no main window");
     record(nameOff, false, "no main window");
     return;
   }
   if (!isBundled(ZH_PACK_ID)) {
     const detail = `bundled pack missing (${isInstalled(ZH_PACK_ID) ? "installed but catalog empty" : "no catalog entry"})`;
     record(nameOn, false, detail);
+    record(nameFresh, false, detail);
     record(nameOff, false, detail);
     return;
   }
   try {
     // Install into this (fresh) profile, exactly like the menu command does.
+    // No localStorage write on purpose: the shell's state has to be enough, or
+    // the pack only translates on the exact origin a menu click happened to be
+    // served from.
     installBundled(ZH_PACK_ID);
     setEnabled(ZH_PACK_ID, true);
-    await writePackSettings(window, true, "auto");
     await ctx.reloadUi();
     const zhText = await waitForUiText(
       window,
@@ -140,8 +162,33 @@ async function verifyPlugins(ctx: VerifyContext): Promise<void> {
       `patched=${patchedZh} translated=${ZH_MARKERS.filter((m) => zhText.includes(m)).join("/")} installed=${isInstalled(ZH_PACK_ID)} enabled=${isEnabled(ZH_PACK_ID)}`,
     );
 
+    // A different server port is a different localStorage origin. Dropping the
+    // mirror simulates that (and a cleared profile) without rebinding the
+    // server; the preload has to restore it from the shell's own state. The
+    // agent reply language is set here too, because it travels in the same
+    // mirror and had no end-to-end proof.
+    setAgentLanguage("zh-CN");
+    await window.webContents.executeJavaScript(
+      `localStorage.removeItem("paperclip-zh-pack.settings"); localStorage.getItem("paperclip-zh-pack.settings") === null`,
+    );
+    await ctx.reloadUi();
+    const freshText = await waitForUiText(
+      window,
+      (text) => ZH_MARKERS.some((marker) => text.includes(marker)),
+      "translated sidebar without a stored mirror",
+    );
+    const mirror = await readPackMirror(window);
+    record(
+      nameFresh,
+      mirror.enabled === true &&
+        mirror.override === "zh-CN" &&
+        mirror.agentLanguage === "zh-CN" &&
+        ZH_MARKERS.some((marker) => freshText.includes(marker)),
+      `mirror=${String(mirror.raw).slice(0, 80)} translated=${ZH_MARKERS.filter((m) => freshText.includes(m)).join("/")}`,
+    );
+    setAgentLanguage("auto");
+
     setEnabled(ZH_PACK_ID, false);
-    await writePackSettings(window, false, "auto");
     await ctx.reloadUi();
     const enText = await waitForUiText(
       window,
@@ -159,7 +206,6 @@ async function verifyPlugins(ctx: VerifyContext): Promise<void> {
 
     // Leave the pack enabled so later checks (and screenshots) run on it.
     setEnabled(ZH_PACK_ID, true);
-    await writePackSettings(window, true, "auto");
     await ctx.reloadUi();
     await waitForUiText(
       window,
@@ -168,6 +214,7 @@ async function verifyPlugins(ctx: VerifyContext): Promise<void> {
     );
   } catch (error) {
     record(nameOn, false, String(error));
+    record(nameFresh, false, String(error));
     record(nameOff, false, String(error));
   }
 }

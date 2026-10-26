@@ -19,7 +19,6 @@ import {
   isBundled,
   isEnabled,
   isInstalled,
-  packSettings,
   rendererPayload,
   setAgentLanguage,
   setEnabled,
@@ -176,25 +175,12 @@ async function checkUpdatesAction(): Promise<void> {
 
 const ZH_PACK_ID = "paperclip-zh-pack";
 
-/**
- * Write the pack settings into the page's localStorage mirror (the bus the
- * pack reads on load), then reload so both worlds re-initialise cleanly —
- * a same-page localStorage write fires no `storage` event.
- */
-async function applyPackSettings(): Promise<void> {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  const settings = packSettings();
-  try {
-    await mainWindow.webContents.executeJavaScript(
-      `localStorage.setItem("paperclip-zh-pack.settings", ${JSON.stringify(JSON.stringify(settings))}); true`,
-    );
-  } catch {
-    // No live page (still loading) — the reload below applies the settings.
-  }
-}
-
 async function reloadMainWindow(): Promise<void> {
   if (!mainWindow || mainWindow.isDestroyed() || !supervisor) return;
+  // The preload writes the pack's settings mirror on every navigation, so a
+  // reload is the only step needed to apply a menu change. Writing it here as
+  // well would target whichever origin happens to be loaded, which is exactly
+  // the port-dependent state the bootstrap is meant to replace.
   await mainWindow.loadURL(supervisor.baseUrl);
 }
 
@@ -207,14 +193,12 @@ async function toggleZhPack(): Promise<void> {
     setEnabled(ZH_PACK_ID, !isEnabled(ZH_PACK_ID));
   }
   installMenu();
-  await applyPackSettings();
   await reloadMainWindow();
 }
 
 async function setAgentReplyLanguage(value: AgentLanguage): Promise<void> {
   setAgentLanguage(value);
   installMenu();
-  await applyPackSettings();
   await reloadMainWindow();
 }
 
